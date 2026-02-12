@@ -4088,6 +4088,22 @@ mod tests {
     }
 
     #[test]
+    fn test_list_type_sugar() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("const xs: [int32] = [1, 2, 3]").unwrap();
+        eval_stmt(&stmts[0], &mut env).unwrap();
+        assert_eq!(
+            env.get("xs"),
+            Some(Value::List(vec![
+                Value::Int(1),
+                Value::Int(2),
+                Value::Int(3),
+            ]))
+        );
+    }
+
+    #[test]
     fn test_list_mixed_types_error() {
         use crate::parser::parse;
         let mut env = Environment::new();

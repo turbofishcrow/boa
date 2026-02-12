@@ -30,8 +30,9 @@ Program  =   { SOI ~ (Stmt ~ (NEWLINE | ";")?)* ~ EOI }
     Declaration  = { (CompConstKw | ConstKw | MutKw) ~ Identifier ~ TypeAnnotation? ~ "=" ~ !"=" ~ !":" ~ Expr }
     Reassignment = { Identifier ~ "=" ~ !"=" ~ !":" ~ Expr }
     TypeAnnotation = { ":" ~ Type }
-    Type = _{ FunctionType | OptionalType | GenericType | TypeName | TypeIdent }
+    Type = _{ FunctionType | OptionalType | ListType | GenericType | TypeName | TypeIdent }
     OptionalType = { (GenericType | TypeName | TypeIdent) ~ "?" }
+    ListType = { "[" ~ Type ~ "]" }
     GenericType = { "<" ~ TypeList ~ ">" ~ TypeIdent }
     FunctionType = { "(" ~ TypeList? ~ ")" ~ ":" ~ Type }
     TypeList = { Type ~ ("," ~ Type)* }

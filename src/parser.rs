@@ -383,6 +383,13 @@ fn parse_type(pair: pest::iterators::Pair<Rule>) -> TypeAnn {
                 type_params: vec![inner],
             }
         }
+        Rule::ListType => {
+            let inner = parse_type(pair.into_inner().next().unwrap());
+            TypeAnn::Generic {
+                name: "List".to_string(),
+                type_params: vec![inner],
+            }
+        }
         _ => panic!("Expected Type, got {:?}", pair.as_rule()),
     }
 }
@@ -2406,6 +2413,44 @@ mod tests {
                         type_params: vec![TypeAnn::Generic {
                             name: "List".to_string(),
                             type_params: vec![TypeAnn::Int32],
+                        }],
+                    })
+                );
+            }
+            _ => panic!("Expected Declaration"),
+        }
+    }
+
+    #[test]
+    fn list_type_sugar() {
+        let stmts = parse("const xs: [int32] = [1, 2, 3]").unwrap();
+        match &stmts[0] {
+            Statement::Declaration { type_ann, .. } => {
+                assert_eq!(
+                    *type_ann,
+                    Some(TypeAnn::Generic {
+                        name: "List".to_string(),
+                        type_params: vec![TypeAnn::Int32],
+                    })
+                );
+            }
+            _ => panic!("Expected Declaration"),
+        }
+    }
+
+    #[test]
+    fn list_type_sugar_nested() {
+        // [str?] should parse as <Maybe<str>>List i.e. List of optional strings
+        let stmts = parse("const xs: [str?] = []").unwrap();
+        match &stmts[0] {
+            Statement::Declaration { type_ann, .. } => {
+                assert_eq!(
+                    *type_ann,
+                    Some(TypeAnn::Generic {
+                        name: "List".to_string(),
+                        type_params: vec![TypeAnn::Generic {
+                            name: "Maybe".to_string(),
+                            type_params: vec![TypeAnn::Str],
                         }],
                     })
                 );

@@ -33,8 +33,9 @@ Implement a Boa interpreter starting with a calculator, then add variables/assig
 28. For-loops: `collection elem var for { body }` syntax with head-final `elem`/`for` keywords, works on lists/strings/ranges via `collection_to_list`, immutable loop variable with fresh scope per iteration, `break`/`continue` support, returns `Unit`
 29. Collection slicing: `list[1..4]` (exclusive) and `list[1..=3]` (inclusive) return a sub-list, works on lists/strings/ranges via `collection_to_list`, out-of-bounds clamped to collection length
 30. Format strings and traits: `f"hello {name}"` format strings with `{expr}` (Display) and `{expr:?}` (Debug) interpolation, escape sequences `\{`/`\}`, nested brace support; Trait system with `TypeName TraitName impl { ... }` syntax, four built-in traits: Display (custom `display: str` for print/f-strings), Debug (custom `debug: str` for `{:?}`, auto-derive fallback with quoted strings), PartialEq (custom `eq: bool` for `==`/`!=` with structural equality fallback), Ord (custom `cmp: Ordering` for `<`/`>`/`<=`/`>=`); built-in `Ordering` enum (Less, Equal, Greater); validation of trait method signatures
+31. `[T]` syntax sugar for `<T>List` type annotations (mirrors `T?` for `<T>Maybe`), desugars to `TypeAnn::Generic { name: "List" }` in parser
 ### Next Steps
-31. Move to compiler implementation
+32. Move to compiler implementation
 
 ### Language Syntax Notes (from BASICS.md)
 - **Head-final syntax**: Keywords and operators come *after* operands (postfix)
@@ -53,5 +54,5 @@ Implement a Boa interpreter starting with a calculator, then add variables/assig
 - **REPL** (`src/main.rs`): Interactive input/output loop
 
 ### Testing
-- 380 passing unit tests for parser, evaluator, booleans, comparisons, control flow, loops, type annotations, modulo, compound assignment, functions, strings, lambdas, generic types, lists, structs, enums, methods, optional types, destructuring, match expressions, pattern binding, ranges, indexing, collection methods, for-loops, slicing, format strings, and traits
+- 383 passing unit tests for parser, evaluator, booleans, comparisons, control flow, loops, type annotations, modulo, compound assignment, functions, strings, lambdas, generic types, lists, structs, enums, methods, optional types, destructuring, match expressions, pattern binding, ranges, indexing, collection methods, for-loops, slicing, format strings, and traits
 - All tests pass with no warnings

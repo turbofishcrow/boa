@@ -52,7 +52,7 @@ Boa is a worldbuilding exercise for a world where a predominantly head-final lan
 The interpreter currently supports:
 
 - **Arithmetic**: `+`, `-`, `*`, `/`, `%` (Python-style modulo), `^` (exponentiation), compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`)
-- **Types**: `int32`, `uint32`, `fl64`, `bool`, `str`, with type annotations, int-to-uint coercion, and `(TargetType cast expr)` numeric casts
+- **Types**: `int32`, `uint32`, `fl64`, `bool`, `str`, with type annotations, int-to-uint coercion, `(TargetType cast expr)` numeric casts, `T?` sugar for `<T>Maybe`, `[T]` sugar for `<T>List`
 - **Variables**: `const` (immutable), `compconst` (compile-time constant), and `mut` (mutable) declarations with optional type annotations
 - **Booleans**: `true`/`false` literals, `&&`, `||`, `!`, comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`)
 - **Control flow**: `condition if { ... } else { ... }`, chained else-if, `loop { ... }`, `condition while { ... }`, `break`, `continue`
@@ -111,5 +111,5 @@ const p = (x: 1.0, y: 2.0)Point
 
 ```sh
 cargo run    # start the REPL
-cargo test   # run the test suite (380 tests)
+cargo test   # run the test suite (383 tests)
 ```
