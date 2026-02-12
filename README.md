@@ -61,12 +61,14 @@ The interpreter currently supports:
 - **Strings**: string literals with escape sequences, `+` concatenation, format strings `f"hello {name}"` with `{expr}` and `{expr:?}` interpolation
 - **Generics**: `<T>` type parameters on functions, structs, and enums with type variable inference
 - **Structs**: `Point struct { x: int32, y: int32 }`, literals `(x: 1, y: 2)Point`, field access `p.x`
-- **Enums**: `Color enum { Red, (int32)Custom }`, variant construction, built-in `Maybe` (`T?`), `Attempt`, and `Ordering`
+- **Enums**: `Color enum { Red, (int32)Custom }`, variant construction
+- **Optional types**: built-in `Maybe` (`T?`), `Attempt` with `.()map`, `.()and_then`, `.()or_else`, `.()or_panic`, `.()or_default`, `.()exists_and`, `.()dne_or`, `.()succeeded_and`, `.()failed_and`
 - **Methods**: `TypeName methods { ... }` declarations, `var.(args)method` call syntax, method chaining
 - **Traits**: `TypeName TraitName impl { ... }` syntax with built-in Display, Debug, PartialEq, and Ord traits
+- **Ordering**: built-in `Ordering` with `.()rev`, `.(other)then`
 - **Pattern matching**: `scrutinee match { pattern -> { body }, ... }`, `=:` operator for if-let/while-let
 - **Destructuring**: `const (field: var)StructName = expr`, `const (var)VariantName = expr`
-- **Collections**: `[1, 2, 3]` list literals, `1..5` / `1..=5` ranges, indexing with negative indices, slicing, `.()map`, `.()filter`, `.()reverse`, `.()enumerate`, `.()take`, `.()take_while`
+- **Collections**: `[1, 2, 3]` list literals, `1..5` / `1..=5` ranges, indexing with negative indices, slicing, `.()map`, `.()filter`, `.()reverse`, `.()enumerate`, `.()take`, `.()while_take`
 - **For-loops**: `collection elem var for { body }`
 - **Block scoping**: variables declared in blocks are local to that block; functions see only globals and their own parameters
 
@@ -111,5 +113,5 @@ const p = (x: 1.0, y: 2.0)Point
 
 ```sh
 cargo run    # start the REPL
-cargo test   # run the test suite (383 tests)
+cargo test   # run the test suite (419 tests)
 ```

@@ -1319,12 +1319,349 @@ fn is_collection(val: &Value) -> bool {
     matches!(val, Value::List(_) | Value::Str(_) | Value::Range { .. })
 }
 
+fn ordering_variant(name: &str) -> Value {
+    Value::EnumVariant {
+        enum_name: "Ordering".to_string(),
+        variant_name: name.to_string(),
+        type_params: vec![],
+        payload: None,
+    }
+}
+
+fn eval_ordering_method(
+    variant_name: &str,
+    method_name: &str,
+    arg_nodes: &[Node],
+    env: &mut Environment,
+) -> Result<Option<Value>, EvalError> {
+    match method_name {
+        "rev" => {
+            if !arg_nodes.is_empty() {
+                return Err(EvalError::TypeError(format!(
+                    "'rev' expects 0 arguments, got {}",
+                    arg_nodes.len()
+                )));
+            }
+            let result = match variant_name {
+                "Less" => ordering_variant("Greater"),
+                "Greater" => ordering_variant("Less"),
+                _ => ordering_variant("Equal"),
+            };
+            Ok(Some(result))
+        }
+        "then" => {
+            if arg_nodes.len() != 1 {
+                return Err(EvalError::TypeError(format!(
+                    "'then' expects 1 argument (an Ordering), got {}",
+                    arg_nodes.len()
+                )));
+            }
+            if variant_name != "Equal" {
+                // Self is not Equal — return self
+                Ok(Some(ordering_variant(variant_name)))
+            } else {
+                // Self is Equal — return the other
+                let other = eval(&arg_nodes[0], env)?;
+                if let Value::EnumVariant { enum_name, .. } = &other
+                    && enum_name == "Ordering"
+                {
+                    Ok(Some(other))
+                } else {
+                    Err(EvalError::TypeError(format!(
+                        "'then' argument must be an Ordering, got {}",
+                        other.type_name()
+                    )))
+                }
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
+fn eval_maybe_attempt_method(
+    receiver: &Value,
+    method_name: &str,
+    arg_nodes: &[Node],
+    env: &mut Environment,
+) -> Result<Option<Value>, EvalError> {
+    let Value::EnumVariant {
+        enum_name,
+        variant_name,
+        payload,
+        ..
+    } = receiver
+    else {
+        return Ok(None);
+    };
+
+    // Determine if this is the "happy path" variant (Exists/Success)
+    let is_happy = match enum_name.as_str() {
+        "Maybe" => variant_name == "Exists",
+        "Attempt" => variant_name == "Success",
+        _ => return Ok(None),
+    };
+
+    match method_name {
+        "map" => {
+            if arg_nodes.len() != 1 {
+                return Err(EvalError::TypeError(format!(
+                    "'map' expects 1 argument (a closure), got {}",
+                    arg_nodes.len()
+                )));
+            }
+            if is_happy {
+                let closure = eval(&arg_nodes[0], env)?;
+                let inner = payload.as_ref().unwrap();
+                let result = call_closure(&closure, vec![*inner.clone()])?;
+                // Wrap result in the same happy variant
+                let wrap_variant = variant_name.clone();
+                Ok(Some(Value::EnumVariant {
+                    enum_name: enum_name.clone(),
+                    variant_name: wrap_variant,
+                    type_params: vec![],
+                    payload: Some(Box::new(result)),
+                }))
+            } else {
+                // DoesNotExist/Failure — pass through unchanged
+                Ok(Some(receiver.clone()))
+            }
+        }
+        "and_then" => {
+            if arg_nodes.len() != 1 {
+                return Err(EvalError::TypeError(format!(
+                    "'and_then' expects 1 argument (a closure), got {}",
+                    arg_nodes.len()
+                )));
+            }
+            if is_happy {
+                let closure = eval(&arg_nodes[0], env)?;
+                let inner = payload.as_ref().unwrap();
+                let result = call_closure(&closure, vec![*inner.clone()])?;
+                // Closure must return the same enum type
+                if let Value::EnumVariant {
+                    enum_name: ref rn, ..
+                } = result
+                {
+                    if rn != enum_name {
+                        return Err(EvalError::TypeError(format!(
+                            "'and_then' closure must return {}, got {}",
+                            enum_name, rn
+                        )));
+                    }
+                } else {
+                    return Err(EvalError::TypeError(format!(
+                        "'and_then' closure must return {}, got {}",
+                        enum_name,
+                        result.type_name()
+                    )));
+                }
+                Ok(Some(result))
+            } else {
+                Ok(Some(receiver.clone()))
+            }
+        }
+        "or_else" => {
+            if arg_nodes.len() != 1 {
+                return Err(EvalError::TypeError(format!(
+                    "'or_else' expects 1 argument (a closure), got {}",
+                    arg_nodes.len()
+                )));
+            }
+            if is_happy {
+                // Already happy — return self unchanged
+                Ok(Some(receiver.clone()))
+            } else {
+                let closure = eval(&arg_nodes[0], env)?;
+                // For Attempt's Failure, pass the error payload to the closure
+                let result = if enum_name == "Attempt" {
+                    let err = payload.as_ref().unwrap();
+                    call_closure(&closure, vec![*err.clone()])?
+                } else {
+                    // Maybe's DoesNotExist has no payload — call with zero args
+                    call_closure(&closure, vec![])?
+                };
+                // Closure must return the same enum type
+                if let Value::EnumVariant {
+                    enum_name: ref rn, ..
+                } = result
+                {
+                    if rn != enum_name {
+                        return Err(EvalError::TypeError(format!(
+                            "'or_else' closure must return {}, got {}",
+                            enum_name, rn
+                        )));
+                    }
+                } else {
+                    return Err(EvalError::TypeError(format!(
+                        "'or_else' closure must return {}, got {}",
+                        enum_name,
+                        result.type_name()
+                    )));
+                }
+                Ok(Some(result))
+            }
+        }
+        "or_panic" => {
+            if !arg_nodes.is_empty() {
+                return Err(EvalError::TypeError(format!(
+                    "'or_panic' expects 0 arguments, got {}",
+                    arg_nodes.len()
+                )));
+            }
+            if is_happy {
+                Ok(Some(*payload.as_ref().unwrap().clone()))
+            } else if enum_name == "Attempt" {
+                let err = payload.as_ref().unwrap();
+                Err(EvalError::TypeError(format!(
+                    "or_panic called on Failure: {}",
+                    err
+                )))
+            } else {
+                Err(EvalError::TypeError(
+                    "or_panic called on DoesNotExist".to_string(),
+                ))
+            }
+        }
+        "exists_and" => {
+            if enum_name != "Maybe" {
+                return Ok(None);
+            }
+            if arg_nodes.len() != 1 {
+                return Err(EvalError::TypeError(format!(
+                    "'exists_and' expects 1 argument (a closure), got {}",
+                    arg_nodes.len()
+                )));
+            }
+            if is_happy {
+                let closure = eval(&arg_nodes[0], env)?;
+                let inner = payload.as_ref().unwrap();
+                let result = call_closure(&closure, vec![*inner.clone()])?;
+                if !matches!(result, Value::Bool(_)) {
+                    return Err(EvalError::TypeError(format!(
+                        "'exists_and' closure must return a bool, got {}",
+                        result.type_name()
+                    )));
+                }
+                Ok(Some(result))
+            } else {
+                Ok(Some(Value::Bool(false)))
+            }
+        }
+        "succeeded_and" => {
+            if enum_name != "Attempt" {
+                return Ok(None);
+            }
+            if arg_nodes.len() != 1 {
+                return Err(EvalError::TypeError(format!(
+                    "'succeeded_and' expects 1 argument (a closure), got {}",
+                    arg_nodes.len()
+                )));
+            }
+            if is_happy {
+                let closure = eval(&arg_nodes[0], env)?;
+                let inner = payload.as_ref().unwrap();
+                let result = call_closure(&closure, vec![*inner.clone()])?;
+                if !matches!(result, Value::Bool(_)) {
+                    return Err(EvalError::TypeError(format!(
+                        "'succeeded_and' closure must return a bool, got {}",
+                        result.type_name()
+                    )));
+                }
+                Ok(Some(result))
+            } else {
+                Ok(Some(Value::Bool(false)))
+            }
+        }
+        "dne_or" => {
+            if enum_name != "Maybe" {
+                return Ok(None);
+            }
+            if arg_nodes.len() != 1 {
+                return Err(EvalError::TypeError(format!(
+                    "'dne_or' expects 1 argument (a closure), got {}",
+                    arg_nodes.len()
+                )));
+            }
+            if is_happy {
+                let closure = eval(&arg_nodes[0], env)?;
+                let inner = payload.as_ref().unwrap();
+                let result = call_closure(&closure, vec![*inner.clone()])?;
+                if !matches!(result, Value::Bool(_)) {
+                    return Err(EvalError::TypeError(format!(
+                        "'dne_or' closure must return a bool, got {}",
+                        result.type_name()
+                    )));
+                }
+                Ok(Some(result))
+            } else {
+                Ok(Some(Value::Bool(true)))
+            }
+        }
+        "failed_and" => {
+            if enum_name != "Attempt" {
+                return Ok(None);
+            }
+            if arg_nodes.len() != 1 {
+                return Err(EvalError::TypeError(format!(
+                    "'failed_and' expects 1 argument (a closure), got {}",
+                    arg_nodes.len()
+                )));
+            }
+            if !is_happy {
+                let closure = eval(&arg_nodes[0], env)?;
+                let err = payload.as_ref().unwrap();
+                let result = call_closure(&closure, vec![*err.clone()])?;
+                if !matches!(result, Value::Bool(_)) {
+                    return Err(EvalError::TypeError(format!(
+                        "'failed_and' closure must return a bool, got {}",
+                        result.type_name()
+                    )));
+                }
+                Ok(Some(result))
+            } else {
+                Ok(Some(Value::Bool(false)))
+            }
+        }
+        "or_default" => {
+            if arg_nodes.len() != 1 {
+                return Err(EvalError::TypeError(format!(
+                    "'or_default' expects 1 argument (a default value), got {}",
+                    arg_nodes.len()
+                )));
+            }
+            if is_happy {
+                Ok(Some(*payload.as_ref().unwrap().clone()))
+            } else {
+                let default = eval(&arg_nodes[0], env)?;
+                Ok(Some(default))
+            }
+        }
+        _ => Ok(None), // Not a built-in Maybe/Attempt method, fall through
+    }
+}
+
 fn eval_builtin_method(
     receiver: &Value,
     method_name: &str,
     arg_nodes: &[Node],
     env: &mut Environment,
 ) -> Result<Option<Value>, EvalError> {
+    if let Value::EnumVariant { enum_name, .. } = receiver
+        && (enum_name == "Maybe" || enum_name == "Attempt")
+    {
+        return eval_maybe_attempt_method(receiver, method_name, arg_nodes, env);
+    }
+
+    if let Value::EnumVariant {
+        enum_name,
+        variant_name,
+        ..
+    } = receiver
+        && enum_name == "Ordering"
+    {
+        return eval_ordering_method(variant_name, method_name, arg_nodes, env);
+    }
+
     if !is_collection(receiver) {
         return Ok(None);
     }
@@ -1416,10 +1753,10 @@ fn eval_builtin_method(
             let taken: Vec<Value> = items.into_iter().take(n).collect();
             Ok(Some(Value::List(taken)))
         }
-        "take_while" => {
+        "while_take" => {
             if arg_nodes.len() != 1 {
                 return Err(EvalError::TypeError(format!(
-                    "'take_while' expects 1 argument (a closure), got {}",
+                    "'while_take' expects 1 argument (a closure), got {}",
                     arg_nodes.len()
                 )));
             }
@@ -1434,7 +1771,7 @@ fn eval_builtin_method(
                     break;
                 } else {
                     return Err(EvalError::TypeError(format!(
-                        "'take_while' closure must return a bool, got {}",
+                        "'while_take' closure must return a bool, got {}",
                         keep.type_name()
                     )));
                 }
@@ -5642,10 +5979,10 @@ mod tests {
     }
 
     #[test]
-    fn test_list_take_while() {
+    fn test_list_while_take() {
         use crate::parser::parse;
         let mut env = Environment::new();
-        let stmts = parse("[1, 2, 3, 4, 5].(\\x => x < 4)take_while").unwrap();
+        let stmts = parse("[1, 2, 3, 4, 5].(\\x => x < 4)while_take").unwrap();
         assert_eq!(
             eval_stmt(&stmts[0], &mut env),
             Ok(Some(Value::List(vec![
@@ -5657,10 +5994,10 @@ mod tests {
     }
 
     #[test]
-    fn test_take_while_none_match() {
+    fn test_while_take_none_match() {
         use crate::parser::parse;
         let mut env = Environment::new();
-        let stmts = parse("[10, 20, 30].(\\x => x < 5)take_while").unwrap();
+        let stmts = parse("[10, 20, 30].(\\x => x < 5)while_take").unwrap();
         assert_eq!(
             eval_stmt(&stmts[0], &mut env),
             Ok(Some(Value::List(vec![])))
@@ -5668,10 +6005,10 @@ mod tests {
     }
 
     #[test]
-    fn test_take_while_all_match() {
+    fn test_while_take_all_match() {
         use crate::parser::parse;
         let mut env = Environment::new();
-        let stmts = parse("[1, 2, 3].(\\x => x < 100)take_while").unwrap();
+        let stmts = parse("[1, 2, 3].(\\x => x < 100)while_take").unwrap();
         assert_eq!(
             eval_stmt(&stmts[0], &mut env),
             Ok(Some(Value::List(vec![
@@ -5683,11 +6020,11 @@ mod tests {
     }
 
     #[test]
-    fn test_take_while_with_chain() {
+    fn test_while_take_with_chain() {
         use crate::parser::parse;
         let mut env = Environment::new();
         let stmts =
-            parse("[1, 2, 3, 4, 5].(\\x => x <= 3)take_while.(\\x => x * 10)map").unwrap();
+            parse("[1, 2, 3, 4, 5].(\\x => x <= 3)while_take.(\\x => x * 10)map").unwrap();
         assert_eq!(
             eval_stmt(&stmts[0], &mut env),
             Ok(Some(Value::List(vec![
@@ -6203,5 +6540,469 @@ Point Display impl {
         let result = eval_stmt(&stmts[2], &mut env);
         assert!(result.is_err());
         assert!(format!("{}", result.unwrap_err()).contains("already implemented"));
+    }
+
+    // --- Maybe built-in methods ---
+
+    #[test]
+    fn test_maybe_map_exists() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Exists.(\\x => x + 1)map").unwrap();
+        let result = eval_stmt(&stmts[0], &mut env).unwrap().unwrap();
+        assert_eq!(
+            result,
+            Value::EnumVariant {
+                enum_name: "Maybe".to_string(),
+                variant_name: "Exists".to_string(),
+                type_params: vec![],
+                payload: Some(Box::new(Value::Int(43))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_maybe_map_does_not_exist() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("const x: int32? = DoesNotExist\nx.(\\v => v + 1)map").unwrap();
+        eval_stmt(&stmts[0], &mut env).unwrap();
+        let result = eval_stmt(&stmts[1], &mut env).unwrap().unwrap();
+        assert_eq!(
+            result,
+            Value::EnumVariant {
+                enum_name: "Maybe".to_string(),
+                variant_name: "DoesNotExist".to_string(),
+                type_params: vec![],
+                payload: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_maybe_and_then_exists() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Exists.(\\x => (x + 1)Exists)and_then").unwrap();
+        let result = eval_stmt(&stmts[0], &mut env).unwrap().unwrap();
+        assert_eq!(
+            result,
+            Value::EnumVariant {
+                enum_name: "Maybe".to_string(),
+                variant_name: "Exists".to_string(),
+                type_params: vec![],
+                payload: Some(Box::new(Value::Int(43))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_maybe_and_then_returns_dne() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Exists.(\\x => DoesNotExist)and_then").unwrap();
+        let result = eval_stmt(&stmts[0], &mut env).unwrap().unwrap();
+        assert_eq!(
+            result,
+            Value::EnumVariant {
+                enum_name: "Maybe".to_string(),
+                variant_name: "DoesNotExist".to_string(),
+                type_params: vec![],
+                payload: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_maybe_or_else_exists() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Exists.(\\=> (0)Exists)or_else").unwrap();
+        let result = eval_stmt(&stmts[0], &mut env).unwrap().unwrap();
+        assert_eq!(
+            result,
+            Value::EnumVariant {
+                enum_name: "Maybe".to_string(),
+                variant_name: "Exists".to_string(),
+                type_params: vec![TypeAnn::Int32],
+                payload: Some(Box::new(Value::Int(42))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_maybe_or_else_dne() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts =
+            parse("const x: int32? = DoesNotExist\nx.(\\=> (99)Exists)or_else").unwrap();
+        eval_stmt(&stmts[0], &mut env).unwrap();
+        let result = eval_stmt(&stmts[1], &mut env).unwrap().unwrap();
+        assert_eq!(
+            result,
+            Value::EnumVariant {
+                enum_name: "Maybe".to_string(),
+                variant_name: "Exists".to_string(),
+                type_params: vec![],
+                payload: Some(Box::new(Value::Int(99))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_maybe_or_panic_exists() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Exists.()or_panic").unwrap();
+        let result = eval_stmt(&stmts[0], &mut env).unwrap().unwrap();
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_maybe_or_panic_dne() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("const x: int32? = DoesNotExist\nx.()or_panic").unwrap();
+        eval_stmt(&stmts[0], &mut env).unwrap();
+        let result = eval_stmt(&stmts[1], &mut env);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("DoesNotExist"));
+    }
+
+    #[test]
+    fn test_maybe_map_chain_or_panic() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(10)Exists.(\\x => x * 2)map.()or_panic").unwrap();
+        let result = eval_stmt(&stmts[0], &mut env).unwrap().unwrap();
+        assert_eq!(result, Value::Int(20));
+    }
+
+    // --- Attempt built-in methods ---
+
+    #[test]
+    fn test_attempt_map_success() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Success.(\\x => x + 1)map").unwrap();
+        let result = eval_stmt(&stmts[0], &mut env).unwrap().unwrap();
+        assert_eq!(
+            result,
+            Value::EnumVariant {
+                enum_name: "Attempt".to_string(),
+                variant_name: "Success".to_string(),
+                type_params: vec![],
+                payload: Some(Box::new(Value::Int(43))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_attempt_map_failure() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(\"err\")Failure.(\\x => x + 1)map").unwrap();
+        let result = eval_stmt(&stmts[0], &mut env).unwrap().unwrap();
+        assert_eq!(
+            result,
+            Value::EnumVariant {
+                enum_name: "Attempt".to_string(),
+                variant_name: "Failure".to_string(),
+                type_params: vec![],
+                payload: Some(Box::new(Value::Str("err".to_string()))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_attempt_and_then_success() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Success.(\\x => (x + 1)Success)and_then").unwrap();
+        let result = eval_stmt(&stmts[0], &mut env).unwrap().unwrap();
+        assert_eq!(
+            result,
+            Value::EnumVariant {
+                enum_name: "Attempt".to_string(),
+                variant_name: "Success".to_string(),
+                type_params: vec![],
+                payload: Some(Box::new(Value::Int(43))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_attempt_or_else_failure() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(\"err\")Failure.(\\e => (0)Success)or_else").unwrap();
+        let result = eval_stmt(&stmts[0], &mut env).unwrap().unwrap();
+        assert_eq!(
+            result,
+            Value::EnumVariant {
+                enum_name: "Attempt".to_string(),
+                variant_name: "Success".to_string(),
+                type_params: vec![],
+                payload: Some(Box::new(Value::Int(0))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_attempt_or_else_success() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Success.(\\e => (0)Success)or_else").unwrap();
+        let result = eval_stmt(&stmts[0], &mut env).unwrap().unwrap();
+        assert_eq!(
+            result,
+            Value::EnumVariant {
+                enum_name: "Attempt".to_string(),
+                variant_name: "Success".to_string(),
+                type_params: vec![],
+                payload: Some(Box::new(Value::Int(42))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_attempt_or_panic_success() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Success.()or_panic").unwrap();
+        let result = eval_stmt(&stmts[0], &mut env).unwrap().unwrap();
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_attempt_or_panic_failure() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(\"something went wrong\")Failure.()or_panic").unwrap();
+        let result = eval_stmt(&stmts[0], &mut env);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("something went wrong"));
+    }
+
+    // --- exists_and / dne_or ---
+
+    #[test]
+    fn test_exists_and_true() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Exists.(\\x => x > 0)exists_and").unwrap();
+        assert_eq!(eval_stmt(&stmts[0], &mut env), Ok(Some(Value::Bool(true))));
+    }
+
+    #[test]
+    fn test_exists_and_false() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Exists.(\\x => x < 0)exists_and").unwrap();
+        assert_eq!(eval_stmt(&stmts[0], &mut env), Ok(Some(Value::Bool(false))));
+    }
+
+    #[test]
+    fn test_exists_and_dne() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("const x: int32? = DoesNotExist\nx.(\\v => true)exists_and").unwrap();
+        eval_stmt(&stmts[0], &mut env).unwrap();
+        assert_eq!(eval_stmt(&stmts[1], &mut env), Ok(Some(Value::Bool(false))));
+    }
+
+    #[test]
+    fn test_dne_or_dne() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("const x: int32? = DoesNotExist\nx.(\\v => false)dne_or").unwrap();
+        eval_stmt(&stmts[0], &mut env).unwrap();
+        assert_eq!(eval_stmt(&stmts[1], &mut env), Ok(Some(Value::Bool(true))));
+    }
+
+    #[test]
+    fn test_dne_or_exists_true() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Exists.(\\x => x > 0)dne_or").unwrap();
+        assert_eq!(eval_stmt(&stmts[0], &mut env), Ok(Some(Value::Bool(true))));
+    }
+
+    #[test]
+    fn test_dne_or_exists_false() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Exists.(\\x => x < 0)dne_or").unwrap();
+        assert_eq!(eval_stmt(&stmts[0], &mut env), Ok(Some(Value::Bool(false))));
+    }
+
+    // --- succeeded_and / failed_and ---
+
+    #[test]
+    fn test_succeeded_and_true() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Success.(\\x => x > 0)succeeded_and").unwrap();
+        assert_eq!(eval_stmt(&stmts[0], &mut env), Ok(Some(Value::Bool(true))));
+    }
+
+    #[test]
+    fn test_succeeded_and_failure() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(\"err\")Failure.(\\x => true)succeeded_and").unwrap();
+        assert_eq!(eval_stmt(&stmts[0], &mut env), Ok(Some(Value::Bool(false))));
+    }
+
+    #[test]
+    fn test_failed_and_true() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(\"timeout\")Failure.(\\e => e == \"timeout\")failed_and").unwrap();
+        assert_eq!(eval_stmt(&stmts[0], &mut env), Ok(Some(Value::Bool(true))));
+    }
+
+    #[test]
+    fn test_failed_and_success() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Success.(\\e => true)failed_and").unwrap();
+        assert_eq!(eval_stmt(&stmts[0], &mut env), Ok(Some(Value::Bool(false))));
+    }
+
+    // --- or_default ---
+
+    #[test]
+    fn test_maybe_or_default_exists() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Exists.(0)or_default").unwrap();
+        assert_eq!(eval_stmt(&stmts[0], &mut env), Ok(Some(Value::Int(42))));
+    }
+
+    #[test]
+    fn test_maybe_or_default_dne() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("const x: int32? = DoesNotExist\nx.(0)or_default").unwrap();
+        eval_stmt(&stmts[0], &mut env).unwrap();
+        assert_eq!(eval_stmt(&stmts[1], &mut env), Ok(Some(Value::Int(0))));
+    }
+
+    #[test]
+    fn test_attempt_or_default_success() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(42)Success.(0)or_default").unwrap();
+        assert_eq!(eval_stmt(&stmts[0], &mut env), Ok(Some(Value::Int(42))));
+    }
+
+    #[test]
+    fn test_attempt_or_default_failure() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("(\"err\")Failure.(0)or_default").unwrap();
+        assert_eq!(eval_stmt(&stmts[0], &mut env), Ok(Some(Value::Int(0))));
+    }
+
+    // --- Ordering built-in methods ---
+
+    #[test]
+    fn test_ordering_rev_less() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("Less.()rev").unwrap();
+        assert_eq!(
+            eval_stmt(&stmts[0], &mut env).unwrap().unwrap(),
+            Value::EnumVariant {
+                enum_name: "Ordering".to_string(),
+                variant_name: "Greater".to_string(),
+                type_params: vec![],
+                payload: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_ordering_rev_greater() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("Greater.()rev").unwrap();
+        assert_eq!(
+            eval_stmt(&stmts[0], &mut env).unwrap().unwrap(),
+            Value::EnumVariant {
+                enum_name: "Ordering".to_string(),
+                variant_name: "Less".to_string(),
+                type_params: vec![],
+                payload: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_ordering_rev_equal() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        let stmts = parse("Equal.()rev").unwrap();
+        assert_eq!(
+            eval_stmt(&stmts[0], &mut env).unwrap().unwrap(),
+            Value::EnumVariant {
+                enum_name: "Ordering".to_string(),
+                variant_name: "Equal".to_string(),
+                type_params: vec![],
+                payload: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_ordering_then_not_equal() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        // Less.then(Greater) -> Less (self is not Equal, return self)
+        let stmts = parse("Less.(Greater)then").unwrap();
+        assert_eq!(
+            eval_stmt(&stmts[0], &mut env).unwrap().unwrap(),
+            Value::EnumVariant {
+                enum_name: "Ordering".to_string(),
+                variant_name: "Less".to_string(),
+                type_params: vec![],
+                payload: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_ordering_then_equal() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        // Equal.then(Greater) -> Greater (self is Equal, return other)
+        let stmts = parse("Equal.(Greater)then").unwrap();
+        assert_eq!(
+            eval_stmt(&stmts[0], &mut env).unwrap().unwrap(),
+            Value::EnumVariant {
+                enum_name: "Ordering".to_string(),
+                variant_name: "Greater".to_string(),
+                type_params: vec![],
+                payload: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_ordering_then_chain() {
+        use crate::parser::parse;
+        let mut env = Environment::new();
+        // Equal.then(Equal).then(Less) -> Less
+        let stmts = parse("Equal.(Equal)then.(Less)then").unwrap();
+        assert_eq!(
+            eval_stmt(&stmts[0], &mut env).unwrap().unwrap(),
+            Value::EnumVariant {
+                enum_name: "Ordering".to_string(),
+                variant_name: "Less".to_string(),
+                type_params: vec![],
+                payload: None,
+            }
+        );
     }
 }

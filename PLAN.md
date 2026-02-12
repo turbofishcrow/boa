@@ -29,13 +29,17 @@ Implement a Boa interpreter starting with a calculator, then add variables/assig
 24. Destructuring declarations: `const (field: var)StructName = expr` for structs with shorthand `const (field)StructName`, `const (var)VariantName = expr` for enum variant payload extraction, `mut` support for mutable bindings
 25. Match expressions: `scrutinee match { pattern -> { body }, ... }` with head-final syntax, literal patterns (int/float/bool/string), enum variant patterns `(v)Exists`/`DoesNotExist`, wildcard `_`, expression semantics (returns value), first-match-wins, runtime error on non-exhaustive match
 26. Pattern binding with `=:` operator: `scrutinee =: pattern if { ... } else { ... }` (if-let), `scrutinee =: pattern while { ... }` (while-let), standalone `scrutinee =: pattern` (returns bool), else-if chains with mixed pattern/condition, `try_match_pattern` helper shared with `eval_match`
-27. Collections and iterators: Range literals `1..5` (exclusive) and `1..=5` (inclusive) with int32 bounds, indexing `list[i]`/`str[i]`/`range[i]` with Python-style negative indices, built-in collection methods `.()map`, `.()filter`, `.()reverse`, `.()enumerate`, `.()take`, `.()take_while` on lists/strings/ranges (all return List), `len` extended for ranges
+27. Collections and iterators: Range literals `1..5` (exclusive) and `1..=5` (inclusive) with int32 bounds, indexing `list[i]`/`str[i]`/`range[i]` with Python-style negative indices, built-in collection methods `.()map`, `.()filter`, `.()reverse`, `.()enumerate`, `.()take`, `.()while_take` on lists/strings/ranges (all return List), `len` extended for ranges
 28. For-loops: `collection elem var for { body }` syntax with head-final `elem`/`for` keywords, works on lists/strings/ranges via `collection_to_list`, immutable loop variable with fresh scope per iteration, `break`/`continue` support, returns `Unit`
 29. Collection slicing: `list[1..4]` (exclusive) and `list[1..=3]` (inclusive) return a sub-list, works on lists/strings/ranges via `collection_to_list`, out-of-bounds clamped to collection length
 30. Format strings and traits: `f"hello {name}"` format strings with `{expr}` (Display) and `{expr:?}` (Debug) interpolation, escape sequences `\{`/`\}`, nested brace support; Trait system with `TypeName TraitName impl { ... }` syntax, four built-in traits: Display (custom `display: str` for print/f-strings), Debug (custom `debug: str` for `{:?}`, auto-derive fallback with quoted strings), PartialEq (custom `eq: bool` for `==`/`!=` with structural equality fallback), Ord (custom `cmp: Ordering` for `<`/`>`/`<=`/`>=`); built-in `Ordering` enum (Less, Equal, Greater); validation of trait method signatures
 31. `[T]` syntax sugar for `<T>List` type annotations (mirrors `T?` for `<T>Maybe`), desugars to `TypeAnn::Generic { name: "List" }` in parser
+
+
+32. Built-in methods for `T?` and `<T, E>Attempt`: `.()map` (transform payload), `.()and_then` (flatmap), `.()or_else` (fallback on unhappy path), `.()or_panic` (unwrap or error), `.()or_default` (unwrap or default value), `.()exists_and`/`.()dne_or` (Maybe predicates), `.()succeeded_and`/`.()failed_and` (Attempt predicates); dispatched as built-in methods in `eval_builtin_method`
+33. Built-in methods for `Ordering`: `.()rev` (Less↔Greater, Equal→Equal), `.(other)then` (if Equal return other, else return self); chainable for multi-field comparisons
 ### Next Steps
-32. Move to compiler implementation
+34. Move to compiler implementation
 
 ### Language Syntax Notes (from BASICS.md)
 - **Head-final syntax**: Keywords and operators come *after* operands (postfix)
@@ -54,5 +58,5 @@ Implement a Boa interpreter starting with a calculator, then add variables/assig
 - **REPL** (`src/main.rs`): Interactive input/output loop
 
 ### Testing
-- 383 passing unit tests for parser, evaluator, booleans, comparisons, control flow, loops, type annotations, modulo, compound assignment, functions, strings, lambdas, generic types, lists, structs, enums, methods, optional types, destructuring, match expressions, pattern binding, ranges, indexing, collection methods, for-loops, slicing, format strings, and traits
+- 419 passing unit tests for parser, evaluator, booleans, comparisons, control flow, loops, type annotations, modulo, compound assignment, functions, strings, lambdas, generic types, lists, structs, enums, methods, optional types, destructuring, match expressions, pattern binding, ranges, indexing, collection methods, for-loops, slicing, format strings, and traits
 - All tests pass with no warnings
