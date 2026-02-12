@@ -1,0 +1,141 @@
+WHITESPACE = _{ " " | "\t" }
+NEWLINE    = _{ "\n" | "\r\n" }
+COMMENT = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
+
+Program  =   { SOI ~ (Stmt ~ (NEWLINE | ";")?)* ~ EOI }
+  Stmt   =   { StructDeclaration | EnumDeclaration | MethodsDeclaration | TraitImplDeclaration | FnDeclaration | DestructuringDecl | Declaration | CompoundReassignment | Reassignment | Expr }
+    DestructuringDecl = { (CompConstKw | ConstKw | MutKw) ~ "(" ~ DestructBindings ~ ")" ~ TypeIdent ~ "=" ~ !"=" ~ Expr }
+    DestructBindings  = { DestructBinding ~ ("," ~ DestructBinding)* }
+    DestructBinding   = { Identifier ~ (":" ~ Identifier)? }
+    StructDeclaration = { TypeParams? ~ TypeIdent ~ StructKw ~ "{" ~ NEWLINE* ~ StructFieldList? ~ NEWLINE* ~ "}" }
+    StructFieldList   = { StructField ~ ("," ~ NEWLINE* ~ StructField)* ~ ","? }
+    StructField       = { Identifier ~ ":" ~ Type }
+    EnumDeclaration   = { TypeParams? ~ TypeIdent ~ EnumKw ~ "{" ~ NEWLINE* ~ EnumVariantList? ~ NEWLINE* ~ "}" }
+    EnumVariantList   = { EnumVariantDef ~ ("," ~ NEWLINE* ~ EnumVariantDef)* ~ ","? }
+    EnumVariantDef    = { ("(" ~ Type ~ ")")? ~ TypeIdent }
+    MethodsDeclaration = { TypeParams? ~ TypeIdent ~ MethodsKw ~ "{" ~ NEWLINE* ~ (FnDeclaration ~ (NEWLINE | ";")*)* ~ NEWLINE* ~ "}" }
+    TraitImplDeclaration = { TypeParams? ~ TypeIdent ~ TypeIdent ~ ImplKw ~ "{" ~ NEWLINE* ~ (FnDeclaration ~ (NEWLINE | ";")*)* ~ NEWLINE* ~ "}" }
+    FnDeclaration = { TypeParams? ~ "(" ~ ParamList? ~ ")" ~ Identifier ~ TypeAnnotation? ~ FnKw ~ Block }
+    TypeParams    = { "<" ~ TypeIdentList ~ ">" }
+    TypeIdentList = { TypeIdent ~ ("," ~ TypeIdent)* }
+    ParamList = { Param ~ ("," ~ Param)* }
+    Param = { MutKw? ~ Identifier ~ ":" ~ Type }
+    CompoundReassignment = { Identifier ~ CompoundOp ~ Expr }
+    CompoundOp = _{ AddAssign | SubAssign | MulAssign | DivAssign | ModAssign }
+      AddAssign = { "+=" }
+      SubAssign = { "-=" }
+      MulAssign = { "*=" }
+      DivAssign = { "/=" }
+      ModAssign = { "%=" }
+    Declaration  = { (CompConstKw | ConstKw | MutKw) ~ Identifier ~ TypeAnnotation? ~ "=" ~ !"=" ~ !":" ~ Expr }
+    Reassignment = { Identifier ~ "=" ~ !"=" ~ !":" ~ Expr }
+    TypeAnnotation = { ":" ~ Type }
+    Type = _{ FunctionType | OptionalType | GenericType | TypeName | TypeIdent }
+    OptionalType = { (GenericType | TypeName | TypeIdent) ~ "?" }
+    GenericType = { "<" ~ TypeList ~ ">" ~ TypeIdent }
+    FunctionType = { "(" ~ TypeList? ~ ")" ~ ":" ~ Type }
+    TypeList = { Type ~ ("," ~ Type)* }
+    TypeName = @{ ("int32" | "uint32" | "fl64" | "bool" | "str") ~ !IdentChar }
+  Expr     =   { Lambda | RangeExpr ~ ExprSuffix? }
+    ExprSuffix = _{ "=:" ~ Pattern ~ (IfTail | WhileTail)? | IfTail | WhileTail | ReturnTail | MatchTail | ForTail }
+    RangeExpr  = _{ OrExpr ~ (RangeOp ~ OrExpr)? }
+    RangeOp    = _{ RangeInclusive | RangeExclusive }
+    RangeInclusive = { "..=" }
+    RangeExclusive = { ".." }
+    Lambda       = { "\\" ~ LambdaParams? ~ "=>" ~ Expr }
+    LambdaParams = { LambdaParam ~ ("," ~ LambdaParam)* }
+    LambdaParam  = { MutKw? ~ Identifier ~ (":" ~ Type)? }
+    IfTail   =   { IfKw ~ Block ~ (ElseKw ~ ElseBody)? }
+    ElseBody = _{ OrExpr ~ ("=:" ~ Pattern ~ IfTail | IfTail) | Block }
+    WhileTail = { WhileKw ~ Block }
+    ForTail   = { ElemKw ~ Identifier ~ ForKw ~ Block }
+    ReturnTail = { ReturnKw }
+    MatchTail  = { MatchKw ~ "{" ~ NEWLINE* ~ MatchArmList? ~ NEWLINE* ~ "}" }
+    MatchArmList = { MatchArm ~ ("," ~ NEWLINE* ~ MatchArm)* ~ ","? }
+    MatchArm   = { Pattern ~ "->" ~ Block }
+    Pattern    = _{ VariantPattern | WildcardPattern | LiteralPattern }
+    VariantPattern  = { "(" ~ Identifier ~ ")" ~ TypeIdent }
+    WildcardPattern = { "_" }
+    LiteralPattern  = { Bool | String | Float | Int | TypeIdent }
+  OrExpr   =   { AndExpr ~ (Or ~ AndExpr)* }
+    Or     =   { "||" } // Logical or
+  AndExpr  =   { CmpExpr ~ (And ~ CmpExpr)* }
+    And    =   { "&&" } // Logical and
+  CmpExpr  =   { AddSub ~ (CmpOp ~ AddSub)* }
+    CmpOp  = _{ Eq | Neq | Lte | Gte | Lt | Gt }
+      Eq   =   { "==" } // Equal
+      Neq  =   { "!=" } // Not equal
+      Lte  =   { "<=" } // Less than or equal
+      Gte  =   { ">=" } // Greater than or equal
+      Lt   =   { "<" }  // Less than
+      Gt   =   { ">" }  // Greater than
+  AddSub   =   { Term ~ (AddSubOp ~ Term)* }
+    AddSubOp = _{ Add | Sub }
+      Add  =   { "+" } // Addition
+      Sub  =   { "-" } // Subtraction
+  Term   =   { Power ~ (MulDivMod ~ Power)* }
+    MulDivMod = _{ Mul | Div | Mod }
+      Mul =   { "*" } // Multiplication
+      Div =   { "/" } // Division
+      Mod =   { "%" } // Modulo (Python-style)
+  Power  =   { Factor ~ (Pow ~ Factor)* }
+    Pow  =   { "^" } // Exponentiation (right-associative)
+  Factor =   { Prefix* ~ Postfix }
+    Prefix = _{ Neg | Not }
+      Neg =   { "-" } // Negative
+      Not =   { "!" } // Logical not
+  Postfix  =   { Primary ~ PostfixOp* }
+    PostfixOp = _{ MethodCall | FieldAccess | IndexAccess }
+    IndexAccess = { "[" ~ Expr ~ "]" }
+    MethodCall  = { "." ~ "(" ~ ArgList? ~ ")" ~ Identifier }
+    FieldAccess = { "." ~ Identifier }
+  Primary  =  _{ StructLiteral | VariantCall | FnCall | CastExpr | Bool | FormatString | String | Float | Int | Loop | Break | Continue | ListLiteral | Block | TypeIdent | Identifier | "(" ~ Expr ~ ")" }
+    CastExpr = { "(" ~ TypeName ~ CastKw ~ Expr ~ ")" }
+    StructLiteral = { "(" ~ StructArgList ~ ")" ~ TypeIdent }
+    StructArgList = { StructArg ~ ("," ~ StructArg)* }
+    StructArg     = { Identifier ~ ":" ~ Expr }
+    VariantCall   = { "(" ~ Expr? ~ ")" ~ TypeIdent }
+    ListLiteral  = { "[" ~ ListElements? ~ "]" }
+    ListElements = { Expr ~ ("," ~ Expr)* }
+    FnCall   = { "(" ~ ArgList? ~ ")" ~ Identifier }
+    ArgList  = { Expr ~ ("," ~ Expr)* }
+    Loop   =   { LoopKw ~ Block }
+    Break  =   { BreakKw }
+    Continue = { ContinueKw }
+    Bool   =  @{ ("true" | "false") ~ !IdentChar }
+    FormatString = @{ "f\"" ~ FormatInner* ~ "\"" }
+    FormatInner  = _{ FormatEscape | FormatInterp | (!("\"" | "\\" | "{") ~ ANY) }
+    FormatInterp = _{ "{" ~ (!"}" ~ ANY)* ~ "}" }
+    FormatEscape = _{ "\\" ~ ("n" | "t" | "r" | "\\" | "\"" | "{" | "}") }
+    String =  @{ "\"" ~ StringInner* ~ "\"" }
+    StringInner = _{ StringEscape | (!"\"" ~ !"\\" ~ ANY) }
+    StringEscape = _{ "\\" ~ ("n" | "t" | "r" | "\\" | "\"") }
+    Float  =  @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+    Int    =  @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
+    Identifier = @{ !(Keyword ~ !IdentChar) ~ IdentStart ~ IdentChar* }
+  Block    =   { "{" ~ NEWLINE* ~ (Stmt ~ (NEWLINE | ";")+ )* ~ Stmt? ~ NEWLINE* ~ "}" }
+
+  IdentStart = _{ 'a'..'z' | "_" }
+  IdentChar  = _{ 'a'..'z' | 'A'..'Z' | '0'..'9' | "_" }
+  TypeIdent  = @{ 'A'..'Z' ~ IdentChar* ~ !IdentChar }
+  Keyword    = _{ "if" | "else" | "true" | "false" | "loop" | "while" | "break" | "continue"
+                | "compconst" | "const" | "mut" | "int32" | "uint32" | "fl64" | "bool" | "fn" | "return" | "cast" | "struct" | "enum" | "methods" | "match" | "elem" | "for" | "impl" }
+  IfKw       = @{ "if" ~ !IdentChar }
+  ElseKw     = @{ "else" ~ !IdentChar }
+  CompConstKw = @{ "compconst" ~ !IdentChar }
+  ConstKw    = @{ "const" ~ !IdentChar }
+  MutKw      = @{ "mut" ~ !IdentChar }
+  LoopKw     = @{ "loop" ~ !IdentChar }
+  WhileKw    = @{ "while" ~ !IdentChar }
+  BreakKw    = @{ "break" ~ !IdentChar }
+  ContinueKw = @{ "continue" ~ !IdentChar }
+  FnKw       = @{ "fn" ~ !IdentChar }
+  ReturnKw   = @{ "return" ~ !IdentChar }
+  StructKw   = @{ "struct" ~ !IdentChar }
+  EnumKw     = @{ "enum" ~ !IdentChar }
+  CastKw     = @{ "cast" ~ !IdentChar }
+  MethodsKw  = @{ "methods" ~ !IdentChar }
+  MatchKw    = @{ "match" ~ !IdentChar }
+  ElemKw     = @{ "elem" ~ !IdentChar }
+  ForKw      = @{ "for" ~ !IdentChar }
+  ImplKw     = @{ "impl" ~ !IdentChar }
